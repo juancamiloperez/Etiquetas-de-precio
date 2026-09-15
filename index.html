@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Etiquetas de Góndola</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+  <style>
+    html, body { background: #f8fafc; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .scanner-video { aspect-ratio: 4/3; object-fit: cover; }
+    #loading { display:flex; align-items:center; justify-content:center; min-height:100vh; flex-direction:column; gap:12px; color:#64748b; }
+    #loading .spinner { width:32px; height:32px; border:3px solid #e2e8f0; border-top-color:#dc2626; border-radius:50%; animation:spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #err-box { display:none; max-width:760px; margin:24px auto; padding:20px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; font-family:monospace; font-size:13px; white-space:pre-wrap; word-break:break-word; }
+    #err-box h3 { margin:0 0 8px 0; font-family:system-ui; font-size:15px; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="loading">
+      <div class="spinner"></div>
+      <div>Cargando aplicación...</div>
+      <div style="font-size:12px; color:#94a3b8;">Si tarda más de 10 segundos, revisa tu conexión a internet</div>
+    </div>
+  </div>
+  <div id="err-box"><h3>⚠ Ocurrió un error al cargar la aplicación</h3><div id="err-content"></div></div>
+
+  <script>
+    // Capturar errores antes de que React se monte
+    window.addEventListener('error', function(e) {
+      var box = document.getElementById('err-box');
+      var content = document.getElementById('err-content');
+      var loading = document.getElementById('loading');
+      if (box && content) {
+        box.style.display = 'block';
+        content.textContent = (e.message || 'Error desconocido') + '\n\n' + (e.filename || '') + ':' + (e.lineno || '?') + ':' + (e.colno || '?');
+        if (loading) loading.style.display = 'none';
+      }
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      var box = document.getElementById('err-box');
+      var content = document.getElementById('err-content');
+      if (box && content) {
+        box.style.display = 'block';
+        content.textContent = 'Promise rejection: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
+      }
+    });
+    // Verificar que los CDNs cargaron
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        var missing = [];
+        if (typeof React === 'undefined') missing.push('React');
+        if (typeof ReactDOM === 'undefined') missing.push('ReactDOM');
+        if (typeof Babel === 'undefined') missing.push('Babel');
+        if (typeof Papa === 'undefined') missing.push('PapaParse');
+        if (typeof XLSX === 'undefined') missing.push('SheetJS');
+        if (missing.length > 0) {
+          var box = document.getElementById('err-box');
+          var content = document.getElementById('err-content');
+          var loading = document.getElementById('loading');
+          box.style.display = 'block';
+          content.textContent = 'No cargaron las siguientes librerías (revisa tu conexión a internet o si tu red bloquea estos dominios):\n\n- ' + missing.join('\n- ');
+          if (loading) loading.style.display = 'none';
+        }
+      }, 5000);
+    });
+  </script>
+
+  <script type="text/babel" data-presets="env,react">
+  const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+  /* ============================================================
+     ICONOS (SVG inline, estilo Lucide)
+     ============================================================ */
+  const ICONS = {
+    Upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+    Camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+    Printer: '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/>',
+    Settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+    Package: '<path d="M16.5 9.4 7.55 4.24"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" x2="12" y1="22.08" y2="12"/>',
+    Search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    Check: '<polyline points="20 6 9 17 4 12"/>',
+    AlertCircle: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+    Tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+    Image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+    Trash2: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+    ScanLine: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" x2="17" y1="12" y2="12"/>',
+    FileSpreadsheet: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>',
+    Link2: '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/>',
+    Eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+    ChevronRight: '<polyline points="9 18 15 12 9 6"/>',
+    Store: '<path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/>',
+  };
+  const Icon = ({ name, size = 24, className = '' }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      className={className}
+      dangerouslySetInnerHTML={{ __html: ICONS[name] || '' }} />
+  );
+  // Aliases para reusar el código del .jsx original sin cambios
+  const Upload = (p) => <Icon name="Upload" {...p} />;
+  const Camera = (p) => <Icon name="Camera" {...p} />;
+  const Printer = (p) => <Icon name="Printer" {...p} />;
+  const Settings = (p) => <Icon name="Settings" {...p} />;
+  const Package = (p) => <Icon name="Package" {...p} />;
+  const Search = (p) => <Icon name="Search" {...p} />;
+  const Check = (p) => <Icon name="Check" {...p} />;
+  const AlertCircle = (p) => <Icon name="AlertCircle" {...p} />;
+  const Tag = (p) => <Icon name="Tag" {...p} />;
+  const ImageIcon = (p) => <Icon name="Image" {...p} />;
+  const Trash2 = (p) => <Icon name="Trash2" {...p} />;
+  const ScanLine = (p) => <Icon name="ScanLine" {...p} />;
+  const FileSpreadsheet = (p) => <Icon name="FileSpreadsheet" {...p} />;
+  const Link2 = (p) => <Icon name="Link2" {...p} />;
+  const Eye = (p) => <Icon name="Eye" {...p} />;
+  const ChevronRight = (p) => <Icon name="ChevronRight" {...p} />;
+  const Store = (p) => <Icon name="Store" {...p} />;
+
+  /* ============================================================
+     TAMAÑOS DE ETIQUETA
+     ============================================================ */
+  const LABEL_SIZES = [
+    { id: '100x30', label: '100 × 30 mm', width: 100, height: 30, hint: 'Grandes y visibles', variant: 'standard' },
+    { id: '70x40',  label: '70 × 40 mm',  width: 70,  height: 40, hint: 'Ofertas con franja amarilla', variant: 'offer' },
+    { id: '35x65',  label: '35 × 65 mm',  width: 35,  height: 65, hint: 'Rectangular universal', variant: 'standard' },
+    { id: '35x86',  label: '35 × 86 mm',  width: 35,  height: 86, hint: 'Rectangular grande', variant: 'standard' },
+    { id: '32x76',  label: '32 × 76 mm',  width: 32,  height: 76, hint: 'Tira con recuadro de color', variant: 'framed' },
+  ];
+
+  /* ============================================================
+     GENERADOR EAN-13
+     ============================================================ */
+  const EAN_L = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+  const EAN_G = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+  const EAN_R = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+  const EAN_PARITY = ['LLLLLL','LLGLGG','LLGGLG','LLGGGL','LGLLGG','LGGLLG','LGGGLL','LGLGLG','LGLGGL','LGGLGL'];
+
+  function eanCheckDigit(code12) {
+    let sum = 0;
+    for (let i = 0; i < 12; i++) sum += parseInt(code12[i], 10) * (i % 2 === 0 ? 1 : 3);
+    return (10 - (sum % 10)) % 10;
+  }
+  function generateEAN13(code) {
+    const s = String(code || '').replace(/\D/g, '');
+    if (s.length !== 12 && s.length !== 13) return null;
+    const base = s.slice(0, 12);
+    const full = base + eanCheckDigit(base);
+    const first = parseInt(full[0], 10);
+    const left = full.slice(1, 7);
+    const right = full.slice(7, 13);
+    const parity = EAN_PARITY[first];
+    let bars = '101';
+    for (let i = 0; i < 6; i++) {
+      const d = parseInt(left[i], 10);
+      bars += parity[i] === 'L' ? EAN_L[d] : EAN_G[d];
+    }
+    bars += '01010';
+    for (let i = 0; i < 6; i++) bars += EAN_R[parseInt(right[i], 10)];
+    bars += '101';
+    return { bars, code: full, type: 'EAN13' };
+  }
+
+  /* ============================================================
+     GENERADOR CODE128 (subset B)
+     ============================================================ */
+  const C128 = [
+    '11011001100','11001101100','11001100110','10010011000','10010001100','10001001100',
+    '10011001000','10011000100','10001100100','11001001000','11001000100','11000100100',
+    '10110011100','10011011100','10011001110','10111001100','10011101100','10011100110',
+    '11001110010','11001011100','11001001110','11011100100','11001110100','11101101110',
+    '11101001100','11100101100','11100100110','11101100100','11100110100','11100110010',
+    '11011011000','11011000110','11000110110','10100011000','10001011000','10001000110',
+    '10110001000','10001101000','10001100010','11010001000','11000101000','11000100010',
+    '10110111000','10110001110','10001101110','10111011000','10111000110','10001110110',
+    '11101110110','11010001110','11000101110','11011101000','11011100010','11011101110',
+    '11101011000','11101000110','11100010110','11101101000','11101100010','11100011010',
+    '11101111010','11001000010','11110001010','10100110000','10100001100','10010110000',
+    '10010000110','10000101100','10000100110','10110010000','10110000100','10011010000',
+    '10011000010','10000110100','10000110010','11000010010','11001010000','11110111010',
+    '11000010100','10001111010','10100111100','10010111100','10010011110','10111100100',
+    '10011110100','10011110010','11110100100','11110010100','11110010010','11011011110',
+    '11011110110','11110110110','10101111000','10100011110','10001011110','10111101000',
+    '10111100010','11110101000','11110100010','10111011110','10111101110','11101011110',
+    '11110101110','11010000100','11010010000','11010011100','1100011101011'
+  ];
+  function generateCODE128(value) {
+    const s = String(value || '').replace(/[^\x20-\x7E]/g, '');
+    if (!s) return null;
+    let bars = C128[104];
+    let checksum = 104;
+    for (let i = 0; i < s.length; i++) {
+      const v = s.charCodeAt(i) - 32;
+      bars += C128[v];
+      checksum += v * (i + 1);
+    }
+    bars += C128[checksum % 103];
+    bars += C128[106];
+    return { bars, code: s, type: 'CODE128' };
+  }
+  function generateBarcode(value) {
+    const s = String(value || '').trim();
+    if (!s) return null;
+    if (/^\d{12,13}$/.test(s)) return generateEAN13(s);
+    return generateCODE128(s);
+  }
+
+  /* ============================================================
+     COMPONENTE SVG DEL CÓDIGO DE BARRAS
+     ============================================================ */
+  function BarcodeSVG({ value, heightMm = 12, showText = true, textSizeMm = 2.5 }) {
+    const data = useMemo(() => generateBarcode(value), [value]);
+    if (!data) {
+      return <div style={{ fontFamily: 'monospace', fontSize: '10px', color: '#999' }}>sin código</div>;
+    }
+    const moduleWidth = 0.33;
+    const barWidth = data.bars.length * moduleWidth;
+    const totalHeight = heightMm + (showText ? textSizeMm + 0.5 : 0);
+    const rects = [];
+    let i = 0;
+    while (i < data.bars.length) {
+      if (data.bars[i] === '1') {
+        let run = 0;
+        while (i < data.bars.length && data.bars[i] === '1') { run++; i++; }
+        rects.push(
+          <rect key={i} x={(i - run) * moduleWidth} y={0} width={run * moduleWidth} height={heightMm} fill="#000" />
+        );
+      } else { i++; }
+    }
+    return (
+      <svg viewBox={`0 0 ${barWidth} ${totalHeight}`} width="100%" height="100%"
+        preserveAspectRatio="xMidYMid meet" shapeRendering="crispEdges">
+        {rects}
+        {showText && (
+          <text x={barWidth / 2} y={heightMm + textSizeMm} textAnchor="middle"
+            fontFamily="monospace" fontSize={textSizeMm} fill="#000">
+            {data.code}
+          </text>
+        )}
+      </svg>
+    );
+  }
+
+  /* ============================================================
+     FORMATEO DE PRECIO
+     ============================================================ */
+  function formatPrice(value, locale = 'es-CO', currency = 'COP') {
+    const n = Number(value);
+    if (!isFinite(n)) return String(value || '');
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: 'currency', currency,
+        minimumFractionDigits: currency === 'COP' || currency === 'CLP' ? 0 : 2,
+        maximumFractionDigits: currency === 'COP' || currency === 'CLP' ? 0 : 2,
+      }).format(n);
+    } catch { return `$${n.toFixed(0)}`; }
+  }
+
+  /* ============================================================
+     PRECIO AUTO-AJUSTABLE
+     Escala el fontSize según el ancho disponible y la longitud del texto
+     ============================================================ */
+  function AutoPrice({ text, widthMm, maxHeightMm, color = '#000', align = 'center', border, padding }) {
+    // En monospace bold, cada caracter ocupa ~0.6 del fontSize en ancho.
+    // Uso 0.62 para dejar un pequeño margen de seguridad.
+    const CHAR_W_RATIO = 0.62;
+    const availableWidth = widthMm - (padding ? padding * 2 : 0) - (border ? 1 : 0);
+    const fontByWidth = availableWidth / (text.length * CHAR_W_RATIO);
+    const fontSize = Math.min(fontByWidth, maxHeightMm);
+    const style = {
+      width: `${widthMm}mm`,
+      fontSize: `${fontSize}mm`,
+      fontWeight: 900,
+      lineHeight: 1,
+      textAlign: align,
+      fontFamily: '"SF Mono", Menlo, Consolas, monospace',
+      whiteSpace: 'nowrap',
+      color: color,
+      letterSpacing: '-0.15mm',
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+    };
+    if (border) { style.border = border; style.padding = `${padding}mm`; }
+    return <div style={style}>{text}</div>;
+  }
+
+  /* ============================================================
+     ETIQUETA - 5 PLANTILLAS
+     ============================================================ */
+  function Label({ size, item, logoSrc, storeName, locale, currency, isOffer }) {
+    const w = `${size.width}mm`;
+    const h = `${size.height}mm`;
+    const baseStyle = {
+      width: w, height: h, boxSizing: 'border-box',
+      background: '#fff', color: '#000', overflow: 'hidden',
+      position: 'relative',
+      fontFamily: 'system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif',
+      border: '0.2mm solid #000', display: 'flex',
+    };
+
+    if (size.id === '100x30') {
+      return (
+        <div style={{ ...baseStyle, padding: '1.2mm 2mm' }}>
+          <div style={{ width: '38mm', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', paddingRight: '1.5mm', borderRight: '0.15mm dashed #aaa' }}>
+            {logoSrc ? (
+              <img src={logoSrc} alt="logo" style={{ maxHeight: '5mm', maxWidth: '100%', objectFit: 'contain', alignSelf: 'flex-start' }} />
+            ) : (
+              <div style={{ fontSize: '2.4mm', fontWeight: 700, letterSpacing: '0.3mm' }}>{storeName || 'TIENDA'}</div>
+            )}
+            <div style={{ fontSize: '2.5mm', lineHeight: 1.15, fontWeight: 600 }}>
+              {(item.descripcion || '').slice(0, 60)}
+            </div>
+            {item.ubicacion && (
+              <div style={{ fontSize: '1.9mm', color: '#555' }}>Ub: {item.ubicacion}</div>
+            )}
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', paddingLeft: '2mm' }}>
+            <AutoPrice
+              text={formatPrice(item.precio, locale, currency)}
+              widthMm={58}
+              maxHeightMm={12}
+              align="right"
+            />
+            <div style={{ height: '9mm' }}>
+              <BarcodeSVG value={item.ean || item.codigo} heightMm={7} textSizeMm={1.8} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (size.id === '70x40') {
+      return (
+        <div style={{ ...baseStyle, flexDirection: 'column', padding: 0 }}>
+          <div style={{
+            background: isOffer ? '#FFD400' : '#111',
+            color: isOffer ? '#000' : '#fff',
+            padding: '0.8mm 2mm',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: '3.2mm', fontWeight: 900, letterSpacing: '0.4mm' }}>
+              {isOffer ? '¡OFERTA!' : (storeName || 'PRECIO')}
+            </span>
+            {logoSrc && <img src={logoSrc} alt="logo" style={{ maxHeight: '4mm', maxWidth: '18mm', objectFit: 'contain' }} />}
+          </div>
+          <div style={{ flex: 1, display: 'flex', padding: '1.5mm 2mm', gap: '2mm' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div style={{ fontSize: '2.6mm', fontWeight: 600, lineHeight: 1.15 }}>
+                {(item.descripcion || '').slice(0, 50)}
+              </div>
+              <div style={{ height: '8mm' }}>
+                <BarcodeSVG value={item.ean || item.codigo} heightMm={6} textSizeMm={1.6} />
+              </div>
+            </div>
+            <div style={{ alignSelf: 'center' }}>
+              <AutoPrice
+                text={formatPrice(item.precio, locale, currency)}
+                widthMm={32}
+                maxHeightMm={13}
+                align="right"
+              />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (size.id === '35x65') {
+      return (
+        <div style={{ ...baseStyle, flexDirection: 'column', padding: '1.5mm 1.5mm' }}>
+          <div style={{ textAlign: 'center', borderBottom: '0.1mm solid #000', paddingBottom: '0.8mm' }}>
+            {logoSrc ? (
+              <img src={logoSrc} alt="logo" style={{ maxHeight: '5mm', maxWidth: '100%', objectFit: 'contain' }} />
+            ) : (
+              <div style={{ fontSize: '2.4mm', fontWeight: 800 }}>{storeName || 'TIENDA'}</div>
+            )}
+          </div>
+          <div style={{ fontSize: '2.2mm', fontWeight: 600, lineHeight: 1.15, marginTop: '1mm', textAlign: 'center', minHeight: '10mm' }}>
+            {(item.descripcion || '').slice(0, 60)}
+          </div>
+          <div style={{ marginTop: '1mm', display: 'flex', justifyContent: 'center' }}>
+            <AutoPrice
+              text={formatPrice(item.precio, locale, currency)}
+              widthMm={32}
+              maxHeightMm={11}
+            />
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ height: '10mm' }}>
+            <BarcodeSVG value={item.ean || item.codigo} heightMm={8} textSizeMm={1.8} />
+          </div>
+          {item.ubicacion && (
+            <div style={{ fontSize: '1.8mm', color: '#555', textAlign: 'center', marginTop: '0.5mm' }}>
+              Ubicación: {item.ubicacion}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (size.id === '35x86') {
+      return (
+        <div style={{ ...baseStyle, flexDirection: 'column', padding: '2mm 1.8mm' }}>
+          <div style={{ textAlign: 'center' }}>
+            {logoSrc ? (
+              <img src={logoSrc} alt="logo" style={{ maxHeight: '7mm', maxWidth: '100%', objectFit: 'contain' }} />
+            ) : (
+              <div style={{ fontSize: '2.8mm', fontWeight: 800 }}>{storeName || 'TIENDA'}</div>
+            )}
+          </div>
+          <div style={{ fontSize: '2.4mm', fontWeight: 600, lineHeight: 1.2, marginTop: '1.5mm', textAlign: 'center', minHeight: '14mm' }}>
+            {(item.descripcion || '').slice(0, 70)}
+          </div>
+          <div style={{ marginTop: '2mm', display: 'flex', justifyContent: 'center' }}>
+            <AutoPrice
+              text={formatPrice(item.precio, locale, currency)}
+              widthMm={31}
+              maxHeightMm={13}
+            />
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ height: '14mm' }}>
+            <BarcodeSVG value={item.ean || item.codigo} heightMm={11} textSizeMm={2} />
+          </div>
+          {item.ubicacion && (
+            <div style={{ fontSize: '1.9mm', color: '#555', textAlign: 'center', marginTop: '0.5mm' }}>
+              Ub: {item.ubicacion}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (size.id === '32x76') {
+      return (
+        <div style={{ ...baseStyle, flexDirection: 'column', padding: 0 }}>
+          <div style={{ background: '#C8102E', color: '#fff', padding: '1mm 1.5mm', textAlign: 'center' }}>
+            {logoSrc ? (
+              <img src={logoSrc} alt="logo" style={{ maxHeight: '5mm', maxWidth: '100%', objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+            ) : (
+              <div style={{ fontSize: '2.6mm', fontWeight: 900, letterSpacing: '0.3mm' }}>{storeName || 'TIENDA'}</div>
+            )}
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '1.5mm', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: '2.2mm', fontWeight: 600, lineHeight: 1.2, textAlign: 'center' }}>
+              {(item.descripcion || '').slice(0, 65)}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <AutoPrice
+                text={formatPrice(item.precio, locale, currency)}
+                widthMm={28}
+                maxHeightMm={11}
+                color="#C8102E"
+                border="0.3mm solid #C8102E"
+                padding={0.5}
+              />
+            </div>
+            <div style={{ height: '10mm' }}>
+              <BarcodeSVG value={item.ean || item.codigo} heightMm={8} textSizeMm={1.7} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  /* ============================================================
+     APP PRINCIPAL
+     ============================================================ */
+  function EtiquetasApp() {
+    const [inventario, setInventario] = useState([]);
+    const [busqueda, setBusqueda] = useState('');
+    const [articuloSel, setArticuloSel] = useState(null);
+    const [tamanoSel, setTamanoSel] = useState('70x40');
+    const [cantidad, setCantidad] = useState(1);
+    const [esOferta, setEsOferta] = useState(false);
+    const [logo, setLogo] = useState(null);
+    const [storeName, setStoreName] = useState('MI TIENDA');
+    const [locale, setLocale] = useState('es-CO');
+    const [currency, setCurrency] = useState('COP');
+    const [tab, setTab] = useState('inventario');
+    const [importMsg, setImportMsg] = useState(null);
+    const [sheetUrl, setSheetUrl] = useState('');
+    const [scanning, setScanning] = useState(false);
+    const [scanError, setScanError] = useState(null);
+    const [scanInput, setScanInput] = useState('');
+    const [printQueue, setPrintQueue] = useState([]);
+    const [previewScale, setPreviewScale] = useState(2);
+    const previewContainerRef = useRef(null);
+    const fileInputRef = useRef(null);
+    const logoInputRef = useRef(null);
+    const videoRef = useRef(null);
+    const scanInputRef = useRef(null);
+    const streamRef = useRef(null);
+    const detectorRef = useRef(null);
+
+    // Persistencia local
+    useEffect(() => {
+      try {
+        const saved = localStorage.getItem('etiquetas_app_v1');
+        if (saved) {
+          const d = JSON.parse(saved);
+          if (d.inventario) setInventario(d.inventario);
+          if (d.logo) setLogo(d.logo);
+          if (d.storeName) setStoreName(d.storeName);
+          if (d.locale) setLocale(d.locale);
+          if (d.currency) setCurrency(d.currency);
+        }
+      } catch (e) { /* ignore */ }
+    }, []);
+    useEffect(() => {
+      try {
+        localStorage.setItem('etiquetas_app_v1', JSON.stringify({
+          inventario, logo, storeName, locale, currency
+        }));
+      } catch (e) { /* ignore */ }
+    }, [inventario, logo, storeName, locale, currency]);
+
+    const normalizeItem = (row) => {
+      const lower = {};
+      Object.keys(row).forEach(k => { lower[String(k).toLowerCase().trim()] = row[k]; });
+      return {
+        codigo:      String(lower['codigo'] ?? lower['código'] ?? lower['codigo interno'] ?? lower['cod'] ?? lower['sku'] ?? '').trim(),
+        ean:         String(lower['ean'] ?? lower['barcode'] ?? lower['codigo de barras'] ?? lower['código de barras'] ?? '').trim(),
+        descripcion: String(lower['descripcion'] ?? lower['descripción'] ?? lower['nombre'] ?? lower['producto'] ?? '').trim(),
+        ubicacion:   String(lower['ubicacion'] ?? lower['ubicación'] ?? lower['gondola'] ?? lower['góndola'] ?? lower['pasillo'] ?? '').trim(),
+        precio:      Number(String(lower['precio'] ?? lower['precio de venta'] ?? lower['venta'] ?? '0').replace(/[^0-9.,-]/g, '').replace(/\.(?=\d{3})/g, '').replace(',', '.')) || 0,
+      };
+    };
+
+    const handleFile = (file) => {
+      if (!file) return;
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv') || name.endsWith('.txt')) {
+        Papa.parse(file, {
+          header: true, skipEmptyLines: true,
+          complete: (res) => {
+            const items = res.data.map(normalizeItem).filter(it => it.codigo || it.ean);
+            setInventario(items);
+            setImportMsg({ type: 'ok', text: `${items.length} artículos importados desde CSV` });
+          },
+          error: (err) => setImportMsg({ type: 'err', text: 'Error CSV: ' + err.message }),
+        });
+      } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const wb = XLSX.read(e.target.result, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
+            const items = json.map(normalizeItem).filter(it => it.codigo || it.ean);
+            setInventario(items);
+            setImportMsg({ type: 'ok', text: `${items.length} artículos importados desde Excel` });
+          } catch (err) { setImportMsg({ type: 'err', text: 'Error Excel: ' + err.message }); }
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        setImportMsg({ type: 'err', text: 'Formato no soportado. Use CSV o Excel.' });
+      }
+    };
+
+    const importFromGoogleSheet = async () => {
+      if (!sheetUrl.trim()) {
+        setImportMsg({ type: 'err', text: 'Pega la URL de tu Google Sheet publicado como CSV.' });
+        return;
+      }
+      let url = sheetUrl.trim();
+      const editMatch = url.match(/\/spreadsheets\/d\/([^/]+)/);
+      if (editMatch && !url.includes('export') && !url.includes('output=csv')) {
+        const id = editMatch[1];
+        const gidMatch = url.match(/[#&?]gid=(\d+)/);
+        const gid = gidMatch ? gidMatch[1] : '0';
+        url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid}`;
+      }
+      try {
+        setImportMsg({ type: 'info', text: 'Descargando...' });
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status + '. ¿Está publicado como CSV o compartido como "cualquiera con el enlace"?');
+        const text = await res.text();
+        Papa.parse(text, {
+          header: true, skipEmptyLines: true,
+          complete: (r) => {
+            const items = r.data.map(normalizeItem).filter(it => it.codigo || it.ean);
+            setInventario(items);
+            setImportMsg({ type: 'ok', text: `${items.length} artículos desde Google Sheets` });
+          },
+        });
+      } catch (err) {
+        setImportMsg({ type: 'err', text: 'No se pudo descargar: ' + err.message });
+      }
+    };
+
+    const handleLogo = (file) => {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => setLogo(e.target.result);
+      reader.readAsDataURL(file);
+    };
+
+    const startScan = async () => {
+      setScanError(null);
+      if (!('BarcodeDetector' in window)) {
+        setScanError('Tu navegador no soporta escaneo por cámara nativo. Usa Chrome/Edge en Android o conecta un lector USB/Bluetooth.');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        detectorRef.current = new window.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e']
+        });
+        setScanning(true);
+        scanLoop();
+      } catch (err) { setScanError('No se pudo acceder a la cámara: ' + err.message); }
+    };
+    const stopScan = () => {
+      setScanning(false);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+    const scanLoop = useCallback(async () => {
+      if (!detectorRef.current || !videoRef.current) return;
+      try {
+        const codes = await detectorRef.current.detect(videoRef.current);
+        if (codes && codes.length > 0) { handleScanResult(codes[0].rawValue); return; }
+      } catch (err) {}
+      if (streamRef.current) requestAnimationFrame(scanLoop);
+    }, []);
+    const handleScanResult = (code) => {
+      stopScan();
+      const found = inventario.find(it => it.ean === code || it.codigo === code);
+      if (found) { setArticuloSel(found); setTab('etiquetas'); }
+      else setScanError(`Código ${code} no encontrado en el inventario.`);
+    };
+    const handleScanSubmit = (e) => {
+      e.preventDefault();
+      const code = scanInput.trim();
+      if (!code) return;
+      const found = inventario.find(it => it.ean === code || it.codigo === code);
+      if (found) { setArticuloSel(found); setScanInput(''); setTab('etiquetas'); }
+      else setScanError(`Código ${code} no encontrado.`);
+    };
+    useEffect(() => () => stopScan(), []);
+
+    const filtrados = useMemo(() => {
+      if (!busqueda.trim()) return inventario.slice(0, 100);
+      const q = busqueda.toLowerCase();
+      return inventario.filter(it =>
+        it.codigo.toLowerCase().includes(q) ||
+        it.ean.toLowerCase().includes(q) ||
+        it.descripcion.toLowerCase().includes(q)
+      ).slice(0, 100);
+    }, [inventario, busqueda]);
+
+    const prepararImpresion = () => {
+      if (!articuloSel) return;
+      const items = Array(Math.max(1, cantidad)).fill(articuloSel);
+      setPrintQueue(items);
+      setTimeout(() => window.print(), 100);
+    };
+
+    const sizeObj = LABEL_SIZES.find(s => s.id === tamanoSel);
+
+    // Cálculo dinámico del zoom de vista previa: ajusta al espacio disponible
+    useEffect(() => {
+      const calcScale = () => {
+        if (!previewContainerRef.current || !sizeObj) return;
+        const c = previewContainerRef.current;
+        const availW = c.clientWidth - 48;   // padding p-6 = 24px cada lado
+        const availH = 420;                    // altura útil del contenedor
+        const MM_TO_PX = 3.7795;               // aprox a 96dpi
+        const labelW = sizeObj.width * MM_TO_PX;
+        const labelH = sizeObj.height * MM_TO_PX;
+        const scaleX = availW / labelW;
+        const scaleY = availH / labelH;
+        const s = Math.min(scaleX, scaleY, 5);  // techo 5x para etiquetas muy pequeñas
+        setPreviewScale(Math.max(0.5, s));
+      };
+      calcScale();
+      window.addEventListener('resize', calcScale);
+      return () => window.removeEventListener('resize', calcScale);
+    }, [tamanoSel, articuloSel, tab]);
+
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-900">
+        <style>{`
+          @media print {
+            @page { margin: 0; size: ${sizeObj.width}mm ${sizeObj.height}mm; }
+            body * { visibility: hidden; }
+            .print-area, .print-area * { visibility: visible; }
+            .print-area { position: absolute; left: 0; top: 0; width: 100%; }
+            .print-label { page-break-after: always; break-after: page; }
+            .print-label:last-child { page-break-after: auto; break-after: auto; }
+            .no-print { display: none !important; }
+          }
+          @media screen { .print-area { display: none; } }
+        `}</style>
+
+        {/* Header */}
+        <header className="no-print bg-white border-b border-slate-200 sticky top-0 z-20">
+          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+            <div className="w-9 h-9 bg-red-600 rounded-md flex items-center justify-center text-white">
+              <Tag size={20} />
+            </div>
+            <div className="flex-1">
+              <h1 className="text-base font-bold tracking-tight">Etiquetas de Góndola</h1>
+              <p className="text-xs text-slate-500">{inventario.length > 0 ? `${inventario.length} artículos cargados` : 'Sin inventario cargado'}</p>
+            </div>
+            <div className="text-xs text-slate-500 hidden sm:block">{storeName}</div>
+          </div>
+          <nav className="max-w-7xl mx-auto px-4 flex gap-1 border-t border-slate-100">
+            {[
+              { id: 'inventario', label: 'Inventario', icon: Package },
+              { id: 'etiquetas',  label: 'Etiquetas',  icon: Tag },
+              { id: 'config',     label: 'Configuración', icon: Settings },
+            ].map(t => {
+              const TIcon = t.icon;
+              const active = tab === t.id;
+              return (
+                <button key={t.id} onClick={() => setTab(t.id)}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                    active ? 'border-red-600 text-red-700' : 'border-transparent text-slate-600 hover:text-slate-900'
+                  }`}>
+                  <TIcon size={16} />
+                  {t.label}
+                </button>
+              );
+            })}
+          </nav>
+        </header>
+
+        <main className="no-print max-w-7xl mx-auto px-4 py-6">
+
+          {/* INVENTARIO */}
+          {tab === 'inventario' && (
+            <div className="space-y-6">
+              <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                  <Upload size={16} className="text-slate-500" />
+                  <h2 className="font-semibold text-sm">Importar base de datos</h2>
+                </div>
+                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="border border-dashed border-slate-300 rounded-md p-4 flex flex-col items-center justify-center text-center hover:border-red-400 transition-colors">
+                    <FileSpreadsheet size={28} className="text-slate-400 mb-2" />
+                    <p className="text-sm font-medium mb-1">Subir CSV o Excel</p>
+                    <p className="text-xs text-slate-500 mb-3">Columnas: codigo, ean, descripcion, ubicacion, precio</p>
+                    <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls,.txt"
+                      onChange={(e) => handleFile(e.target.files[0])} className="hidden" />
+                    <button onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-700">
+                      Seleccionar archivo
+                    </button>
+                  </div>
+                  <div className="border border-dashed border-slate-300 rounded-md p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Link2 size={18} className="text-slate-500" />
+                      <p className="text-sm font-medium">Desde Google Sheets</p>
+                    </div>
+                    <p className="text-xs text-slate-500 mb-3">
+                      En Google Sheets: <span className="font-medium">Archivo → Compartir → Publicar en la web</span>, o compártelo como "cualquiera con el enlace".
+                    </p>
+                    <input value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/..."
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm mb-2 focus:outline-none focus:border-red-500" />
+                    <button onClick={importFromGoogleSheet}
+                      className="w-full px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-700">
+                      Importar desde URL
+                    </button>
+                  </div>
+                </div>
+                {importMsg && (
+                  <div className={`px-5 py-3 border-t text-sm flex items-center gap-2 ${
+                    importMsg.type === 'ok' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                    importMsg.type === 'err' ? 'bg-red-50 text-red-800 border-red-200' :
+                    'bg-blue-50 text-blue-800 border-blue-200'
+                  }`}>
+                    {importMsg.type === 'ok' ? <Check size={16} /> : <AlertCircle size={16} />}
+                    {importMsg.text}
+                  </div>
+                )}
+              </section>
+
+              <section className="bg-white border border-slate-200 rounded-lg">
+                <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-3">
+                  <Search size={16} className="text-slate-500" />
+                  <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+                    placeholder="Buscar por código, EAN o descripción"
+                    className="flex-1 text-sm focus:outline-none bg-transparent" />
+                  <span className="text-xs text-slate-400">{filtrados.length} / {inventario.length}</span>
+                </div>
+                {inventario.length === 0 ? (
+                  <div className="p-10 text-center text-slate-400 text-sm">
+                    Importa tu base de datos para empezar
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                        <tr>
+                          <th className="text-left px-4 py-2 font-medium">Código</th>
+                          <th className="text-left px-4 py-2 font-medium">EAN</th>
+                          <th className="text-left px-4 py-2 font-medium">Descripción</th>
+                          <th className="text-left px-4 py-2 font-medium">Ubicación</th>
+                          <th className="text-right px-4 py-2 font-medium">Precio</th>
+                          <th className="text-right px-4 py-2 font-medium"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtrados.map((it, i) => (
+                          <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                            <td className="px-4 py-2 font-mono text-xs">{it.codigo}</td>
+                            <td className="px-4 py-2 font-mono text-xs">{it.ean}</td>
+                            <td className="px-4 py-2">{it.descripcion}</td>
+                            <td className="px-4 py-2 text-slate-500 text-xs">{it.ubicacion}</td>
+                            <td className="px-4 py-2 text-right font-medium">{formatPrice(it.precio, locale, currency)}</td>
+                            <td className="px-4 py-2 text-right">
+                              <button onClick={() => { setArticuloSel(it); setTab('etiquetas'); }}
+                                className="text-red-600 hover:text-red-800 text-xs font-medium inline-flex items-center gap-1">
+                                Etiqueta <ChevronRight size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+
+          {/* ETIQUETAS */}
+          {tab === 'etiquetas' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-1 space-y-4">
+                <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                    <ScanLine size={16} className="text-slate-500" />
+                    <h2 className="font-semibold text-sm">Escanear o ingresar código</h2>
+                  </div>
+                  <div className="p-5 space-y-3">
+                    <form onSubmit={handleScanSubmit}>
+                      <label className="text-xs text-slate-500 mb-1 block">Lector físico (USB/Bluetooth) o manual</label>
+                      <div className="flex gap-2">
+                        <input ref={scanInputRef} value={scanInput}
+                          onChange={(e) => setScanInput(e.target.value)}
+                          placeholder="Escanea o escribe el código" autoFocus
+                          className="flex-1 px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:border-red-500" />
+                        <button type="submit" className="px-3 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-700">
+                          Buscar
+                        </button>
+                      </div>
+                    </form>
+                    <div className="border-t border-slate-100 pt-3">
+                      <p className="text-xs text-slate-500 mb-2">O usar cámara del dispositivo:</p>
+                      {!scanning ? (
+                        <button onClick={startScan} disabled={inventario.length === 0}
+                          className="w-full px-4 py-2 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 disabled:bg-slate-300 inline-flex items-center justify-center gap-2">
+                          <Camera size={16} /> Activar cámara
+                        </button>
+                      ) : (
+                        <div className="space-y-2">
+                          <video ref={videoRef} className="w-full rounded-md bg-black scanner-video" playsInline muted />
+                          <button onClick={stopScan} className="w-full px-4 py-2 bg-slate-200 text-slate-800 text-sm rounded-md hover:bg-slate-300">
+                            Detener
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {scanError && (
+                      <div className="text-xs bg-red-50 text-red-700 border border-red-200 rounded p-2 flex gap-2 items-start">
+                        <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                        <span>{scanError}</span>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="px-5 py-3 border-b border-slate-100">
+                    <h2 className="font-semibold text-sm">Tamaño de impresión</h2>
+                  </div>
+                  <div className="p-3 space-y-1.5">
+                    {LABEL_SIZES.map(sz => (
+                      <button key={sz.id} onClick={() => setTamanoSel(sz.id)}
+                        className={`w-full text-left px-3 py-2 rounded-md text-sm border transition-colors ${
+                          tamanoSel === sz.id ? 'border-red-600 bg-red-50' : 'border-slate-200 hover:border-slate-300'
+                        }`}>
+                        <div className="font-medium">{sz.label}</div>
+                        <div className="text-xs text-slate-500">{sz.hint}</div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                  <div className="px-5 py-3 border-b border-slate-100">
+                    <h2 className="font-semibold text-sm">Opciones</h2>
+                  </div>
+                  <div className="p-5 space-y-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={esOferta}
+                        onChange={(e) => setEsOferta(e.target.checked)}
+                        className="w-4 h-4 accent-red-600" />
+                      Marcar como oferta (franja amarilla)
+                    </label>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Cantidad de copias</label>
+                      <input type="number" min="1" max="100" value={cantidad}
+                        onChange={(e) => setCantidad(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:border-red-500" />
+                    </div>
+                    <button onClick={prepararImpresion} disabled={!articuloSel}
+                      className="w-full px-4 py-3 bg-red-600 text-white text-sm font-semibold rounded-md hover:bg-red-700 disabled:bg-slate-300 inline-flex items-center justify-center gap-2">
+                      <Printer size={16} /> Imprimir {cantidad > 1 ? `(${cantidad})` : ''}
+                    </button>
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      Se abrirá el diálogo de impresión del navegador. Selecciona allí tu impresora inalámbrica (debe estar configurada en el sistema).
+                    </p>
+                  </div>
+                </section>
+              </div>
+
+              <div className="lg:col-span-2">
+                <section className="bg-white border border-slate-200 rounded-lg p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Eye size={16} className="text-slate-500" />
+                    <h2 className="font-semibold text-sm">Vista previa</h2>
+                    <span className="text-xs text-slate-400 ml-auto">{sizeObj.label} · {sizeObj.hint}</span>
+                  </div>
+                  {articuloSel ? (
+                    <div className="space-y-4">
+                      <div ref={previewContainerRef}
+                        className="bg-slate-100 rounded-md p-6 flex items-center justify-center overflow-hidden"
+                        style={{ height: '480px' }}>
+                        <div style={{ transform: `scale(${previewScale})`, transformOrigin: 'center center', transition: 'transform 0.2s ease' }}>
+                          <Label size={sizeObj} item={articuloSel} logoSrc={logo}
+                            storeName={storeName} locale={locale} currency={currency} isOffer={esOferta} />
+                        </div>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-200 rounded-md p-4 text-sm">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div><span className="text-slate-500">Código:</span> <span className="font-mono">{articuloSel.codigo}</span></div>
+                          <div><span className="text-slate-500">EAN:</span> <span className="font-mono">{articuloSel.ean}</span></div>
+                          <div className="col-span-2"><span className="text-slate-500">Descripción:</span> {articuloSel.descripcion}</div>
+                          <div><span className="text-slate-500">Ubicación:</span> {articuloSel.ubicacion || '—'}</div>
+                          <div><span className="text-slate-500">Precio:</span> <span className="font-semibold">{formatPrice(articuloSel.precio, locale, currency)}</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-16 text-slate-400">
+                      <Tag size={40} className="mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">Selecciona o escanea un artículo para ver la etiqueta</p>
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+          )}
+
+          {/* CONFIGURACIÓN */}
+          {tab === 'config' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
+              <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                  <ImageIcon size={16} className="text-slate-500" />
+                  <h2 className="font-semibold text-sm">Logo de la empresa</h2>
+                </div>
+                <div className="p-5">
+                  {logo ? (
+                    <div className="space-y-3">
+                      <div className="bg-slate-50 border border-slate-200 rounded p-4 flex items-center justify-center min-h-[120px]">
+                        <img src={logo} alt="logo" className="max-h-24 max-w-full object-contain" />
+                      </div>
+                      <button onClick={() => setLogo(null)}
+                        className="text-sm text-red-600 hover:text-red-800 inline-flex items-center gap-1">
+                        <Trash2 size={14} /> Quitar logo
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="border border-dashed border-slate-300 rounded-md p-6 text-center">
+                      <ImageIcon size={32} className="text-slate-400 mx-auto mb-2" />
+                      <p className="text-xs text-slate-500 mb-3">PNG o JPG. Recomendado: fondo transparente.</p>
+                      <input ref={logoInputRef} type="file" accept="image/*"
+                        onChange={(e) => handleLogo(e.target.files[0])} className="hidden" />
+                      <button onClick={() => logoInputRef.current?.click()}
+                        className="px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-700">
+                        Subir logo
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+                  <Store size={16} className="text-slate-500" />
+                  <h2 className="font-semibold text-sm">Datos de la tienda</h2>
+                </div>
+                <div className="p-5 space-y-3">
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Nombre (visible si no hay logo)</label>
+                    <input value={storeName} onChange={(e) => setStoreName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:border-red-500" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Moneda</label>
+                    <select value={currency} onChange={(e) => {
+                      setCurrency(e.target.value);
+                      const map = { COP: 'es-CO', ARS: 'es-AR', MXN: 'es-MX', CLP: 'es-CL', PEN: 'es-PE', USD: 'en-US', EUR: 'es-ES' };
+                      if (map[e.target.value]) setLocale(map[e.target.value]);
+                    }}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm focus:outline-none focus:border-red-500">
+                      <option value="COP">COP - Peso colombiano</option>
+                      <option value="ARS">ARS - Peso argentino</option>
+                      <option value="MXN">MXN - Peso mexicano</option>
+                      <option value="CLP">CLP - Peso chileno</option>
+                      <option value="PEN">PEN - Sol peruano</option>
+                      <option value="USD">USD - Dólar</option>
+                      <option value="EUR">EUR - Euro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 block mb-1">Formato de número</label>
+                    <input value={locale} onChange={(e) => setLocale(e.target.value)}
+                      placeholder="es-CO"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm font-mono focus:outline-none focus:border-red-500" />
+                  </div>
+                </div>
+              </section>
+
+              <section className="bg-white border border-slate-200 rounded-lg overflow-hidden md:col-span-2">
+                <div className="px-5 py-3 border-b border-slate-100">
+                  <h2 className="font-semibold text-sm">Notas sobre impresión</h2>
+                </div>
+                <div className="p-5 text-sm text-slate-600 space-y-2 leading-relaxed">
+                  <p>• <strong>Impresoras inalámbricas:</strong> deben estar emparejadas previamente con el dispositivo. El navegador imprime al diálogo del sistema.</p>
+                  <p>• <strong>Impresoras térmicas de etiquetas</strong> (Zebra, Brother, Xprinter): configura el tamaño del papel exactamente como el de la etiqueta.</p>
+                  <p>• <strong>Lector de código de barras físico:</strong> los lectores USB/Bluetooth funcionan como teclado. Haz clic en el campo "Escanear" y dispara el lector.</p>
+                  <p>• <strong>Google Sheets:</strong> el sheet debe estar publicado como CSV o compartido como "cualquiera con el enlace puede ver".</p>
+                  <p>• <strong>Persistencia:</strong> el inventario, logo y datos de la tienda se guardan en este navegador automáticamente.</p>
+                </div>
+              </section>
+            </div>
+          )}
+        </main>
+
+        <div className="print-area">
+          {printQueue.map((item, idx) => (
+            <div key={idx} className="print-label">
+              <Label size={sizeObj} item={item} logoSrc={logo}
+                storeName={storeName} locale={locale} currency={currency} isOffer={esOferta} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  try {
+    ReactDOM.createRoot(document.getElementById('root')).render(<EtiquetasApp />);
+  } catch (e) {
+    var box = document.getElementById('err-box');
+    var content = document.getElementById('err-content');
+    var loading = document.getElementById('loading');
+    if (box && content) {
+      box.style.display = 'block';
+      content.textContent = 'Error de renderizado:\n\n' + (e.message || e) + '\n\n' + (e.stack || '');
+      if (loading) loading.style.display = 'none';
+    }
+    throw e;
+  }
+  </script>
+</body>
+</html>
